@@ -135,9 +135,9 @@ def run():
         st.markdown("\n## Pearson Correlation Coefficient", )
         st.caption("Correlation of the Log Returns of the crypto assets")
         st.altair_chart(heatmap.properties(height=500), use_container_width=True)
-        st.info("""* A correlation of *+1* means a perfect positive linear relationship between the selected asssets.
+        st.info("""* A correlation of *+1* means a perfect positive linear relationship between the selected assets.
 \n* A correlation of *0* means that the assets are not related.
-\n* A correlation of *-1* means a perfect negative linear relationship between the selected asssets.""")
+\n* A correlation of *-1* means a perfect negative linear relationship between the selected assets.""")
                 
         # Download Data
         ## Close Price data
