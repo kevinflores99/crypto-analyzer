@@ -1,5 +1,4 @@
 import csv
-from matplotlib.pyplot import sca
 import streamlit as st 
 import pandas as pd
 import altair as alt
