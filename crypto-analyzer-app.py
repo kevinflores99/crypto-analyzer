@@ -193,7 +193,7 @@ def run():
         
                 
         # Download Data
-        dl1, dl2, dl3, dl4, dl5, dl6= st.columns(6)
+        dl1, dl2, dl3 = st.columns(3)
         with dl1:                    
             ## Close Price data
             csv_price = convert_df(data)
