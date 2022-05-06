@@ -1,12 +1,22 @@
 import csv
 import streamlit as st 
 import pandas as pd
+from pandas_datareader import data as web
 import altair as alt
 from typing import List
 import yfinance as yf
 from bs4 import BeautifulSoup as bs
 import requests
 import numpy as np
+
+
+# Setting up page configurations
+st.set_page_config(page_title="Crypto Analyzer | Beta", 
+                    page_icon="./images/icon_navigador.png", 
+                    layout="wide", 
+                    initial_sidebar_state="auto", 
+                    menu_items=None)
+
 
 @st.cache
 def get_symbols(url: str) -> List:
@@ -75,7 +85,11 @@ def corr_matrix(df: pd.DataFrame) -> pd.DataFrame:
     corr.rename(columns={0:'correlation'}, inplace=True)
     return corr
 
-
+@st.cache
+def get_market_cap_data(symbols: List) -> pd.DataFrame:
+    df_market_cap = web.get_quote_yahoo(symbols)['marketCap'].to_frame()
+    return df_market_cap
+    
 @st.cache
 def convert_df(df: pd.DataFrame) -> csv:
     # IMPORTANT: Cache the conversion to prevent computation on every rerun
@@ -84,12 +98,6 @@ def convert_df(df: pd.DataFrame) -> csv:
 def run():
     """Runs the hole app
     """
-    # Setting up page configurations
-    st.set_page_config(page_title="Crypto Analyzer | Beta", 
-                       page_icon="./images/icon_navigador.png", 
-                       layout="centered", 
-                       initial_sidebar_state="auto", 
-                       menu_items=None)
     
     st.title("Crypto Analyzer App")
     
@@ -103,7 +111,7 @@ def run():
     # Allow the user to choose the cryptos to analyze
     options = st.multiselect('Select cryptos to analyze', 
                              symbols, 
-                             default=['BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD'],)
+                             default=['BTC-USD', 'ETH-USD', 'SOL-USD', 'ADA-USD', 'DOT-USD', 'BNB-USD'],)
     
     # Collecting data after choosing the symbols (min two symbols)
     if len(options) > 1: 
@@ -112,7 +120,9 @@ def run():
         # st.dataframe(data)
         # Get the correlation of the asset's returns
         corr = corr_matrix(data)
-        # Heatmap base
+        
+        #Graphs
+        ## Heatmap base
         hm = alt.Chart(corr).mark_rect().encode(
                 x=alt.X('level_1:O', axis=alt.Axis(title='')),
                 y=alt.Y('level_0:O', axis=alt.Axis(title='')),
@@ -120,7 +130,7 @@ def run():
                 color='correlation:Q',
                 tooltip=[alt.Tooltip('correlation', format=',.2f')],
                 )
-        # Configure text
+        ## Configure text
         text = hm.mark_text().encode(
             text=alt.Text('correlation:Q', format=',.2f', ),
             color=alt.condition(
@@ -129,7 +139,7 @@ def run():
                 alt.value('black')
             )
         )
-        # Whole heatmap
+        ## Whole heatmap
         heatmap = (hm + text)
         #
         st.markdown("\n## Pearson Correlation Coefficient", )
@@ -138,33 +148,79 @@ def run():
         st.info("""* A correlation of *+1* means a perfect positive linear relationship between the selected assets.
 \n* A correlation of *0* means that the assets are not related.
 \n* A correlation of *-1* means a perfect negative linear relationship between the selected assets.""")
+        
+        ## Mean - Variance Analysis
+        ### Prepering log returns data
+        st.markdown("\n## Mean - Variance Analysis", )
+        df_returns = transform_to_returns(data) # log returns df
+        returns = df_returns.reset_index().melt("Date", var_name="symbol", value_name="returns").copy()
+        summary = df_returns.agg(['mean', 'std']).T
+        market_cap = get_market_cap_data(options)
+        summary = summary.join(market_cap)
+        summary = summary.reset_index()
+        summary.rename(columns={"index":"symbol"}, inplace=True)
+        
+        selector = alt.selection_multi(empty='all', fields=['symbol'])
+        domain = list(summary['symbol'].unique())
+        color_scale = alt.Scale(domain=domain, scheme="viridis")
+
+        bubble = alt.Chart(summary).mark_point(filled=True).encode(
+            x=alt.X("std:Q", title="Risk"),
+            y=alt.Y("mean:Q", title="Return"),
+            color=alt.condition(selector,
+                                'symbol',
+                                alt.value('lightgray'),
+                                scale=color_scale),
+            size=alt.Size("marketCap", legend=None),
+            tooltip=[alt.Tooltip("symbol", title="Symbol"),
+                    alt.Tooltip("mean", format=",.4f", title="Mean"),
+                    alt.Tooltip("std", format=",.4f", title="Standard Deviation"), 
+                    alt.Tooltip("marketCap", format="$,.0f", title="Market Cap")]
+        ).add_selection(selector).interactive()
+
+        hists = alt.Chart(returns).mark_bar(opacity=0.5, thickness=100).encode(
+            x=alt.X('returns:Q',bin=alt.Bin(maxbins=100)),
+            y=alt.Y('count()',stack=None,title="Count of Log Returns"),
+            color=alt.Color('symbol:N',
+                            scale=color_scale)
+        ).add_selection(selector).transform_filter(
+            selector
+        ).interactive()
+        # bubble chart and distribution of log returns chart together
+        mv_chart = alt.hconcat(bubble, hists)
+        st.altair_chart(mv_chart, use_container_width=True)
+        
+        
                 
         # Download Data
-        ## Close Price data
-        csv_price = convert_df(data)
-        st.download_button(label="Download Close Price data as CSV", 
-                           data=csv_price, 
-                           file_name="close_prices.csv", 
-                           mime="text/csv")
-        ## Close Price data and Log Returns
-        df_returns = transform_to_returns(data) # log returns df
-        symbols = list(df_returns.columns) # store the column names to be change
-        for symbol in symbols:
-            # change the column names to be different in order to join dataframes later
-            # The 'r' prefix is added to the columns of the returns dataframe
-            df_returns.rename(columns={f'{symbol}':f'r{symbol}'}, inplace=True)
-        price_return_data = data.join(df_returns, how='left') 
-        csv_lreturns = convert_df(price_return_data)
-        st.download_button(label="Download Log Returns data as CSV", 
-                           data=csv_lreturns, 
-                           file_name="close_prices.csv", 
-                           mime="text/csv")
-        ## Correlation Coefficients data
-        csv_corr = convert_df(corr)
-        st.download_button(label="Download Correlation Coefficients data as CSV", 
-                           data=csv_corr, 
-                           file_name="correlations.csv", 
-                           mime="text/csv")
+        dl1, dl2, dl3, dl4, dl5, dl6= st.columns(6)
+        with dl1:                    
+            ## Close Price data
+            csv_price = convert_df(data)
+            st.download_button(label="Download Close Price data as CSV", 
+                            data=csv_price, 
+                            file_name="close_prices.csv", 
+                            mime="text/csv")
+        with dl2:    
+            ## Close Price data and Log Returns
+            symbols = list(df_returns.columns) # store the column names to be change
+            for symbol in symbols:
+                # change the column names to be different in order to join dataframes later
+                # The 'r' prefix is added to the columns of the returns dataframe
+                df_returns.rename(columns={f'{symbol}':f'r{symbol}'}, inplace=True)
+            price_return_data = data.join(df_returns, how='left') 
+            csv_lreturns = convert_df(price_return_data)
+            st.download_button(label="Download Log Returns data as CSV", 
+                            data=csv_lreturns, 
+                            file_name="close_prices.csv", 
+                            mime="text/csv")
+        with dl3:
+            ## Correlation Coefficients data
+            csv_corr = convert_df(corr)
+            st.download_button(label="Download Correlation Coefficients data as CSV", 
+                            data=csv_corr, 
+                            file_name="correlations.csv", 
+                            mime="text/csv")
         
     
     
